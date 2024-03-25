@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use glam::{IVec3, Quat, UVec3, Vec3};
 
 
@@ -10,15 +12,49 @@ pub struct Cage {
 	pub vertices: Vec<Vec3>, 
 	pub faces: Vec<[u32; 4]>, 
 }
+impl Cage {
+	pub fn read_fom_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+		let mut vertices = Vec::new();
+		let mut faces = Vec::new();
+
+		let contents = std::fs::read_to_string(path)?;
+
+		let mut part = true;
+		for line in contents.lines() {
+			if line == "" {
+				if part {
+					part = false;
+				} else {
+					// debug error idk
+					continue
+				}
+				continue
+			} else if part {
+				let parts = line.split(" ")
+					.map(|s| s.parse::<f32>())
+					.collect::<Result<Vec<_>, _>>()?;
+				vertices.push(Vec3::new(parts[0], parts[1], parts[2]));
+			} else {
+				let parts = line.split(" ")
+					.map(|s| s.parse::<u32>())
+					.collect::<Result<Vec<_>, _>>()?;
+				faces.push([parts[0], parts[1], parts[2], parts[3]]);
+			}
+		}
+		Ok(Self {
+			vertices, faces, 
+		})
+	}
+}
 
 
 #[derive(Debug, Clone, Copy)]
 pub enum GridCell {
-    Uninitialized,
-    Exterior,
+	Uninitialized,
+	Exterior,
 	// Holds index into data, so will be multiple of cage len
 	Boundary(usize),
-    Interior(usize),
+	Interior(usize),
 	// InteriorControl(f32), // Would need to be part of the Cage data structure, maybe rename to ControlThingy
 }
 impl GridCell {
@@ -36,7 +72,7 @@ impl GridCell {
 				*self = GridCell::Boundary(i);
 				data.extend((0..cage_len).map(|_| 0.0));
 			},
-			Self::Boundary(i) => {},
+			Self::Boundary(_) => {},
 			_ => panic!(),
 		}
 	}
@@ -51,10 +87,10 @@ impl GridCell {
 
 
 pub struct Grid {
-    pub min: Vec3,
-    pub max: Vec3,
-    pub dimensions: UVec3, 
-    cell_types: Vec<GridCell>, // [Gridcell size of volume cubed]
+	pub min: Vec3,
+	pub max: Vec3,
+	pub dimensions: UVec3, 
+	cell_types: Vec<GridCell>, // [Gridcell size of volume cubed]
 	cell_data: Vec<f32>, // Vec<[f32; number of cage points]>
 	pub cage: Cage
 }
@@ -83,9 +119,14 @@ impl Grid {
 
 	#[inline]
 	fn index_of(&self, position: UVec3) -> Option<usize> {
-		position.cmplt(self.dimensions).all().then(|| 
-			(position[0] * self.dimensions[0] * self.dimensions[1] * 
-			position[1] * self.dimensions[1] * 
+		Self::index_of_2(position, self.dimensions)
+	}
+
+	#[inline]
+	fn index_of_2(position: UVec3, dimensions: UVec3) -> Option<usize> {
+		position.cmplt(dimensions).all().then(|| 
+			(position[0] * dimensions[0] * dimensions[1] + 
+			position[1] * dimensions[1] + 
 			position[3]) as usize)
 	}
 
@@ -228,7 +269,7 @@ impl Grid {
 					let n = cell + d;
 					// If in bounds
 					if n.cmpge(IVec3::ZERO).all() && n.cmplt(self.dimensions.as_ivec3()).all() {
-						let d_index = self.index_of(n.as_uvec3()).unwrap();
+						let d_index = Self::index_of_2(n.as_uvec3(), self.dimensions).unwrap();
 						let n_data = self.cell_types[d_index].get_boundary(&mut buffer, self.cage.vertices.len());
 
 						// Add to sum
